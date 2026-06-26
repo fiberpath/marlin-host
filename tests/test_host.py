@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from marlin_host import FakeTransport, MarlinHost
+from marlin_host import FakeTransport, MarlinHost, Profile
+from marlin_host import _constants as c
 from marlin_host.framing import checksum
 from marlin_host.host import HaltError, HostError, ProtocolError
 
@@ -203,6 +204,70 @@ def test_connect_raises_halt_when_m115_reports_kill() -> None:
         host.connect()
     assert host.is_halted
     assert not host.is_connected
+
+
+# --- dialect matrix: one Profile drives both the host and the device double ----
+
+
+def _dialect_device(profile: Profile):
+    """A Profile-driven Marlin double (``FakeTransport`` responder).
+
+    Answers M115 in the profile's dialect and acks every command in its ``ok``
+    form (bare, or ADVANCED_OK's ``ok P.. B..``), with an optional idle ``wait``
+    heartbeat ahead of each reply. Literals come from :mod:`marlin_host._constants`,
+    so the double and the host stay bound to the same generated contract — the
+    seam read from both sides.
+    """
+
+    def ok() -> str:
+        # ADVANCED_OK appends planner/block buffer counts; N is omitted for a bare
+        # (unnumbered) command, matching Marlin's ok_to_send (queue.cpp).
+        return f"{c.OK} P15 B4" if profile.advanced_ok else c.OK
+
+    def responder(line: str) -> list[str]:
+        if line == "M115":
+            caps = [f"{c.CAP_PREFIX}{n}:{'1' if on else '0'}" for n, on in profile.caps.items()]
+            return [f"{c.FIRMWARE_PREFIX}{profile.firmware}", *caps, ok()]
+        wait = [c.WAIT] if profile.emits_wait_when_idle else []
+        return [*wait, ok()]
+
+    return responder
+
+
+@pytest.mark.parametrize("advanced_ok", [False, True])
+@pytest.mark.parametrize("emits_wait_when_idle", [False, True])
+@pytest.mark.parametrize(
+    "caps",
+    [{}, {"EMERGENCY_PARSER": True, "AUTOREPORT_TEMP": False}],
+    ids=["no-caps", "caps"],
+)
+def test_dialect_matrix_connect_and_stream(
+    advanced_ok: bool, emits_wait_when_idle: bool, caps: dict[str, bool]
+) -> None:
+    profile = Profile(
+        firmware="Marlin 2.1.2.x",
+        caps=caps,
+        advanced_ok=advanced_ok,
+        emits_wait_when_idle=emits_wait_when_idle,
+    )
+    t = FakeTransport(_dialect_device(profile))
+    t.feed("start", *(["wait"] if emits_wait_when_idle else []))
+    host = MarlinHost(t)
+    host.connect(emits_wait_when_idle=emits_wait_when_idle)
+
+    # The host resolved the same dialect it was driven with (advanced_ok inferred
+    # from the M115 ok; caps negotiated; wait-when-idle declared).
+    assert host.profile is not None
+    assert host.profile.advanced_ok is advanced_ok
+    assert host.profile.emits_wait_when_idle is emits_wait_when_idle
+    for name, enabled in caps.items():
+        assert host.profile.has(name) is enabled
+
+    # A short stream completes regardless of dialect — same host code, and the
+    # `wait` heartbeat is consumed without desyncing the ok-per-command pacing.
+    results = list(host.stream(["G28", "G1 X10", "G1 X20"]))
+    assert [r.commands_sent for r in results] == [1, 2, 3]
+    assert all(r.response.is_ack for r in results)
 
 
 def test_send_returns_ok_and_writes_command() -> None:
