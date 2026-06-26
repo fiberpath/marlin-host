@@ -35,6 +35,8 @@ just test         # pytest
 
 ## Usage
 
+Parse a single response line:
+
 ```python
 from marlin_host import parse_response
 
@@ -46,3 +48,20 @@ parse_response("Resend: 13").resend_line     # 13
 parse_response("echo:busy: processing").is_keepalive   # True
 ```
 
+Drive a real controller (`pip install 'marlin-host[serial]'`):
+
+```python
+from marlin_host import MarlinHost, SerialTransport
+
+host = MarlinHost(SerialTransport("/dev/ttyUSB0", 250000), reliable=True)
+host.connect()                       # resets the board, drains the startup banner
+print(host.capabilities().firmware)
+
+host.send("G28")                     # homes; returns when the controller acks `ok`
+for progress in host.stream(open("part.gcode")):
+    print(f"{progress.commands_sent}/{progress.total_commands}")
+
+host.emergency_stop()                # M112, out-of-band
+```
+
+Develop and test against `FakeTransport` — no hardware required.

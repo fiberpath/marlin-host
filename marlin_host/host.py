@@ -15,7 +15,7 @@ pause/resume/stop are host-side: pausing simply stops sending the next line.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -172,7 +172,7 @@ class MarlinHost:
         return Capabilities(firmware=firmware, caps=caps)
 
     def stream(
-        self, program: list[str], *, poll_interval: float = DEFAULT_PAUSE_POLL
+        self, program: Iterable[str], *, poll_interval: float = DEFAULT_PAUSE_POLL
     ) -> Iterator[StreamProgress]:
         """Stream a G-code program line by line, yielding progress per command.
 

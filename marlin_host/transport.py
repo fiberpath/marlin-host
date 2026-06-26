@@ -9,11 +9,14 @@ connection lifecycle (it needs DTR/reset handling).
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from collections.abc import Callable, Iterable
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
-__all__ = ["Transport", "FakeTransport"]
+__all__ = ["Transport", "FakeTransport", "SerialTransport"]
+
+DEFAULT_BAUD_RATE = 250_000
 
 
 @runtime_checkable
@@ -60,3 +63,61 @@ class FakeTransport:
 
     def close(self) -> None:
         self.closed = True
+
+
+class SerialTransport:
+    """pyserial-backed :class:`Transport`. Requires ``pip install marlin-host[serial]``.
+
+    Opening the port and toggling DTR resets the controller (most boards reset on
+    DTR), so it reboots and emits ``start`` — :meth:`MarlinHost.connect` then
+    drains the banner. Pass ``reset_on_open=False`` to skip the toggle (e.g. for
+    boards that do not reset on DTR, or to attach to a running controller).
+
+    NOTE: the DTR-reset timing is board-specific and unvalidated against hardware;
+    expect to tune :meth:`reset` during the first real session.
+    """
+
+    def __init__(
+        self,
+        port: str,
+        baud_rate: int = DEFAULT_BAUD_RATE,
+        *,
+        timeout: float = 2.0,
+        reset_on_open: bool = True,
+    ) -> None:
+        try:
+            import serial
+        except ImportError as exc:  # pragma: no cover - exercised only without the extra
+            raise ImportError(
+                "SerialTransport requires pyserial: pip install 'marlin-host[serial]'"
+            ) from exc
+        # Typed as Any so the optional pyserial dependency does not leak into the
+        # type-checked surface.
+        self._serial: Any = serial.serial_for_url(
+            port, baudrate=baud_rate, timeout=timeout, write_timeout=timeout
+        )
+        if reset_on_open:
+            self.reset()
+
+    def reset(self) -> None:
+        """Toggle DTR low→high to reset the controller (it reboots and emits ``start``)."""
+        self._serial.dtr = False
+        time.sleep(0.1)
+        self._serial.reset_input_buffer()
+        self._serial.dtr = True
+
+    def write_line(self, line: str) -> None:
+        self._serial.write((line + "\n").encode("ascii"))
+        self._serial.flush()
+
+    def read_line(self, timeout: float | None = None) -> str | None:
+        if timeout is not None:
+            self._serial.timeout = timeout
+        raw = self._serial.readline()
+        if not raw:
+            return None
+        decoded: str = raw.decode("ascii", errors="replace").strip()
+        return decoded
+
+    def close(self) -> None:
+        self._serial.close()
