@@ -18,6 +18,9 @@ dependencies = []
 # Real serial transport. Without it the library is pure (FakeTransport only).
 serial = ["pyserial>=3.5"]
 
+[project.scripts]
+marlin-host = "marlin_host.console:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

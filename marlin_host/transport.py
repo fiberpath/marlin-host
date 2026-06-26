@@ -14,7 +14,7 @@ from collections import deque
 from collections.abc import Callable, Iterable
 from typing import Any, Protocol, runtime_checkable
 
-__all__ = ["Transport", "FakeTransport", "SerialTransport"]
+__all__ = ["Transport", "FakeTransport", "SerialTransport", "TracingTransport"]
 
 DEFAULT_BAUD_RATE = 250_000
 
@@ -121,3 +121,29 @@ class SerialTransport:
 
     def close(self) -> None:
         self._serial.close()
+
+
+class TracingTransport:
+    """Decorate a :class:`Transport`, logging every line to ``sink``.
+
+    Each transmitted line is logged as ``> <line>`` and each received line as
+    ``< <line>``. Recording a real session this way captures a trace that can
+    seed the conformance corpus.
+    """
+
+    def __init__(self, inner: Transport, sink: Callable[[str], None]) -> None:
+        self._inner = inner
+        self._sink = sink
+
+    def write_line(self, line: str) -> None:
+        self._sink(f"> {line}")
+        self._inner.write_line(line)
+
+    def read_line(self, timeout: float | None = None) -> str | None:
+        line = self._inner.read_line(timeout)
+        if line is not None:
+            self._sink(f"< {line}")
+        return line
+
+    def close(self) -> None:
+        self._inner.close()

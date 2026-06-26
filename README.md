@@ -65,3 +65,15 @@ host.emergency_stop()                # M112, out-of-band
 ```
 
 Develop and test against `FakeTransport` — no hardware required.
+
+## Console
+
+An interactive console for hands-on bring-up:
+
+```sh
+marlin-host --port /dev/ttyUSB0 --reliable --log session.trace
+# then type G-code, or :caps  :stream part.gcode  :estop  :quit
+```
+
+`--log` records every TX/RX line (via `TracingTransport`) — a captured session
+that can seed the conformance corpus.
