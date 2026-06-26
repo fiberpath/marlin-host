@@ -55,6 +55,10 @@ class FakeTransport:
         lines before the first ``>`` are pre-fed (e.g. the ``start`` banner); the
         rx lines after each ``>`` are returned on the host's Nth write — so a
         captured session replays as a conformance fixture, hardware-free.
+
+        A trace replayed through :meth:`MarlinHost.connect` should lead with the
+        boot banner (``< start``) so connect detects readiness from the pre-fed
+        lines; otherwise connect's ``M110`` probe consumes the first write group.
         """
         leading: list[str] = []
         groups: list[list[str]] = []
@@ -99,13 +103,14 @@ class FakeTransport:
 class SerialTransport:
     """pyserial-backed :class:`Transport`. Requires ``pip install marlin-host[serial]``.
 
-    Opening the port and toggling DTR resets the controller (most boards reset on
-    DTR), so it reboots and emits ``start`` — :meth:`MarlinHost.connect` then
-    drains the banner. Pass ``reset_on_open=False`` to skip the toggle (e.g. for
-    boards that do not reset on DTR, or to attach to a running controller).
+    Opening the port and pulsing DTR resets the controller (AVR/RAMPS and chip-fed
+    32-bit boards reset on a DTR edge), so it reboots and re-emits ``start`` —
+    :meth:`MarlinHost.connect` then waits for that greeting (or probes). Pass
+    ``reset_on_open=False`` to skip the pulse (native-USB boards that ignore DTR,
+    or to attach to a running controller).
 
-    NOTE: the DTR-reset timing is board-specific and unvalidated against hardware;
-    expect to tune :meth:`reset` during the first real session.
+    NOTE: the DTR-pulse timing is board-specific and unvalidated against hardware;
+    expect to tune :meth:`reset` during the first real session — see issue #4.
     """
 
     def __init__(
@@ -130,12 +135,27 @@ class SerialTransport:
         if reset_on_open:
             self.reset()
 
-    def reset(self) -> None:
-        """Toggle DTR low→high to reset the controller (it reboots and emits ``start``)."""
-        self._serial.dtr = False
-        time.sleep(0.1)
-        self._serial.reset_input_buffer()
-        self._serial.dtr = True
+    def reset(self, *, dtr: bool = True, rts: bool = False, assert_hold: float = 0.2) -> None:
+        """Pulse the reset line so the controller reboots and re-emits ``start``.
+
+        Follows the printrun sequence — assert DTR, hold ``assert_hold`` seconds,
+        release — which puts a clean falling edge on the adapter's DTR pin. On
+        AVR/RAMPS and chip-fed 32-bit boards that edge couples to ``RESET`` through
+        a small capacitor; native-USB boards have no such cap and ignore it (fine —
+        ``MarlinHost.connect`` falls back to probing). RTS is left at the driver
+        default unless ``rts=True``; no standard Marlin board needs it. The input
+        buffer is deliberately not flushed so ``connect`` can match the ``start``
+        greeting. ``assert_hold`` is the only board-specific knob here; see issue #4.
+        """
+        if dtr:
+            self._serial.dtr = True  # assert -> adapter DTR pin low -> RESET edge
+        if rts:
+            self._serial.rts = True
+        time.sleep(assert_hold)
+        if dtr:
+            self._serial.dtr = False  # release
+        if rts:
+            self._serial.rts = False
 
     def write_line(self, line: str) -> None:
         self._serial.write((line + "\n").encode("ascii"))
