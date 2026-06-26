@@ -281,6 +281,7 @@ class MarlinHost:
         self, command: str, collect: list[MarlinResponse] | None = None
     ) -> MarlinResponse:
         resends = 0
+        awaiting_resend_ack = False
         while True:
             line = self._t.read_line(self._idle_timeout)
             if line is None:
@@ -290,6 +291,13 @@ class MarlinHost:
             resp = parse_response(line)
 
             if resp.is_ack:
+                if awaiting_resend_ack:
+                    # Marlin emits `ok` right after `Resend:` (queue.cpp:276) to ack the
+                    # resend *request*, before it processes the resent line. Swallow that
+                    # one and keep waiting for the resent line's real `ok`; returning here
+                    # would desync reliable streaming by one ack on every recovery.
+                    awaiting_resend_ack = False
+                    continue
                 return resp
 
             if resp.is_fatal:
@@ -303,6 +311,7 @@ class MarlinHost:
                 if resends > self._max_resends:
                     raise ProtocolError(f"exceeded {self._max_resends} resend retries")
                 self._t.write_line(frame(self._line_number, command))
+                awaiting_resend_ack = True
                 continue
 
             if resp.kind is MarlinResponseKind.BUSY:
