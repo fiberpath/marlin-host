@@ -5,7 +5,45 @@ from __future__ import annotations
 import pytest
 
 from marlin_host import FakeTransport, MarlinHost
+from marlin_host.framing import checksum
 from marlin_host.host import HaltError, HostError, ProtocolError
+
+
+class _ResendSim:
+    """Minimal stateful Marlin double: a content-dependent ``FakeTransport`` responder.
+
+    Validates each framed line's ``N`` + XOR checksum and emits Marlin's real
+    recovery — ``Error:`` then ``Resend: N`` then a trailing ``ok`` (the resend
+    *request* ack, ``queue.cpp:275-276``) — followed, once the host resends, by the
+    resent line's real ``ok``. Optionally injects one transmission error to drive a
+    recovery. Unlike ``from_trace`` (indexed by write count, ``transport.py:75``),
+    this reacts to the exact bytes written, so it can prove checksum/line-number
+    correctness and expose the request-ack desync.
+    """
+
+    def __init__(self, *, corrupt_first: int = 0) -> None:
+        self.expected = 1
+        self._corrupt_pending = int(corrupt_first)
+
+    def __call__(self, line: str) -> list[str]:
+        head, _, csum = line.partition("*")
+        number = int(head[1:].split(" ", 1)[0])
+        if "M110" in line:  # framed resync sets the next expected line number
+            self.expected = number + 1
+            return ["ok"]
+        valid = checksum(head) == int(csum) and number == self.expected
+        inject = self._corrupt_pending > 0
+        if inject:
+            self._corrupt_pending -= 1
+        if inject or not valid:
+            last = self.expected - 1
+            return [
+                f"Error:checksum mismatch, Last Line: {last}",
+                f"Resend: {self.expected}",
+                "ok",  # request ack, BEFORE the resent line is processed
+            ]
+        self.expected += 1
+        return ["ok"]
 
 
 def test_connect_consumes_startup_banner_until_idle() -> None:
@@ -139,7 +177,9 @@ def test_reliable_send_retransmits_on_resend_then_succeeds() -> None:
     def responder(_line: str) -> list[str]:
         state["n"] += 1
         if state["n"] == 1:
-            return ["Error:checksum mismatch, Last Line: 0", "Resend: 1"]
+            # Marlin's real recovery: Error, Resend, then a trailing `ok` that acks
+            # the resend request (queue.cpp:275-276) — not the resent line.
+            return ["Error:checksum mismatch, Last Line: 0", "Resend: 1", "ok"]
         return ["ok"]
 
     t = FakeTransport(responder=responder)
@@ -157,3 +197,34 @@ def test_reliable_send_gives_up_after_max_resends() -> None:
     host = MarlinHost(t, reliable=True, max_resends=3)
     with pytest.raises(ProtocolError):
         host.send("G28")
+
+
+def test_reliable_send_returns_resent_lines_ok_not_request_ack() -> None:
+    # Regression for the resend desync: on recovery Marlin emits a trailing `ok`
+    # (the resend-request ack) before the resent line's real `ok`. The host must
+    # swallow the request ack and return the real one, leaving the stream in sync.
+    sim = _ResendSim(corrupt_first=1)
+    t = FakeTransport(responder=sim)
+    host = MarlinHost(t, reliable=True)
+
+    assert host.send("G1 X10").is_ack  # line 1: corrupted once, then recovered
+    assert host.send("G1 X20").is_ack  # line 2: must not consume a stale ack
+
+    # In sync: the controller advanced to line 3 and no unconsumed `ok` is left in
+    # the stream (the off-by-one bug leaks the resent line's real `ok` to here).
+    assert sim.expected == 3
+    assert t.read_line() is None
+
+
+def test_reliable_send_recovers_from_back_to_back_resends() -> None:
+    # Two consecutive recoveries before success: each Resend's request-ack must be
+    # swallowed independently (the flag re-arms per resend), then the resent line's
+    # real `ok` returned — proving the boolean flag survives back-to-back recovery.
+    sim = _ResendSim(corrupt_first=2)
+    t = FakeTransport(responder=sim)
+    host = MarlinHost(t, reliable=True)
+
+    assert host.send("G1 X10").is_ack  # rejected twice, accepted on the third frame
+    assert host.send("G1 X20").is_ack
+    assert sim.expected == 3
+    assert t.read_line() is None
