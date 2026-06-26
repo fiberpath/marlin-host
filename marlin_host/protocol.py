@@ -119,8 +119,9 @@ def parse_response(line: str) -> MarlinResponse:
             resend_line=int(match.group()) if match else None,
         )
 
-    # Halt is a fatal Error: line; detect it before the generic Error branch.
-    if "kill()" in stripped or "halted" in stripped.lower():
+    # Fatal/halt state (kill, thermal protection, stopped) — detect before the
+    # generic Error branch; the host must stop streaming on any of these.
+    if any(marker in stripped for marker in c.FATAL_MARKERS):
         message = (
             stripped[len(c.ERROR_PREFIX) :] if stripped.startswith(c.ERROR_PREFIX) else stripped
         )

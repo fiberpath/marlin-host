@@ -32,3 +32,16 @@ CAP_PREFIX = 'Cap:'  # gcode/host/M115.cpp cap_line()
 FIRMWARE_PREFIX = 'FIRMWARE_NAME:'  # gcode/host/M115.cpp
 BUSY_PREFIX = 'busy:'  # shared head of STR_BUSY_* (core/language.h)
 START = 'start'  # MarlinCore.cpp setup()
+
+# --- fatal-state markers: a received line containing any of these means
+# the controller has halted/stopped and the host must stop streaming ---
+FATAL_MARKERS = (
+    'Printer halted. kill() called!',  # STR_ERR_KILLED
+    'Printer stopped due to errors. Fix the error and use M999 to restart. (Temperature is reset. Set it after restarting)',  # STR_ERR_STOPPED
+    '!! KILL caused by ',  # STR_KILL_PRE
+    ', system stopped! Heater_ID: ',  # STR_STOPPED_HEATER
+    'Thermal Runaway',  # STR_T_THERMAL_RUNAWAY
+    'Heating failed',  # STR_T_HEATING_FAILED
+    'MAXTEMP triggered',  # STR_T_MAXTEMP
+    'MINTEMP triggered',  # STR_T_MINTEMP
+)

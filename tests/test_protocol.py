@@ -23,7 +23,14 @@ from marlin_host.protocol import parse_response
         ("Error:Line Number is not Last Line Number+1, Last Line: 40", Kind.ERROR),
         ("Error:No Checksum with line number, Last Line: 7", Kind.ERROR),
         ("Error:Printer halted. kill() called!", Kind.HALT),
-        ("Error:Printer stopped due to errors; use M999 to restart", Kind.ERROR),
+        ("Thermal Runaway, system stopped! Heater_ID: 0", Kind.HALT),
+        ("Error:MINTEMP triggered, system stopped! Heater_ID: 0", Kind.HALT),
+        ("!! KILL caused by KILL button/pin", Kind.HALT),
+        (
+            "Error:Printer stopped due to errors. Fix the error and use M999 to "
+            "restart. (Temperature is reset. Set it after restarting)",
+            Kind.HALT,
+        ),
         ("echo:busy: processing", Kind.BUSY),
         ("echo:busy: paused for user", Kind.BUSY),
         ("//action:pause", Kind.ACTION),

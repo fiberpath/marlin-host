@@ -51,17 +51,32 @@ _STRUCTURAL = {
     "START": ("start", "MarlinCore.cpp setup()"),
 }
 
+# Macros whose literal, if present as a substring in a received line, means the
+# controller has halted/stopped and the host MUST stop streaming. Extracted from
+# language.h and emitted as the FATAL_MARKERS tuple (safety-critical).
+_FATAL_MACROS = [
+    "STR_ERR_KILLED",
+    "STR_ERR_STOPPED",
+    "STR_KILL_PRE",
+    "STR_STOPPED_HEATER",
+    "STR_T_THERMAL_RUNAWAY",
+    "STR_T_HEATING_FAILED",
+    "STR_T_MAXTEMP",
+    "STR_T_MINTEMP",
+]
+
 _DEFINE = re.compile(r'#define\s+(STR_\w+)\s+"((?:[^"\\]|\\.)*)"')
 
 
 def _parse_literals(text: str) -> dict[str, str]:
+    wanted = set(_WANTED) | set(_FATAL_MACROS)
     found: dict[str, str] = {}
     for match in _DEFINE.finditer(text):
         name = match.group(1)
-        if name in _WANTED:
+        if name in wanted:
             # Decode C escapes (e.g. \" -> ").
             found[name] = match.group(2).encode().decode("unicode_escape")
-    missing = sorted(set(_WANTED) - set(found))
+    missing = sorted(wanted - set(found))
     if missing:
         raise SystemExit(f"gen_constants: STR_* macros not found in language.h: {missing}")
     return found
@@ -88,6 +103,15 @@ def _render(literals: dict[str, str], ref: str, sha: str) -> str:
     lines += ["", "# --- structural prefixes (serial emitters) ---"]
     for const, (literal, citation) in _STRUCTURAL.items():
         lines.append(f"{const} = {literal!r}  # {citation}")
+    lines += [
+        "",
+        "# --- fatal-state markers: a received line containing any of these means",
+        "# the controller has halted/stopped and the host must stop streaming ---",
+        "FATAL_MARKERS = (",
+    ]
+    for macro in _FATAL_MACROS:
+        lines.append(f"    {literals[macro]!r},  # {macro}")
+    lines.append(")")
     return "\n".join(lines) + "\n"
 
 
