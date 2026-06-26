@@ -8,6 +8,7 @@ from .host import (
     HaltError,
     HostError,
     MarlinHost,
+    Profile,
     ProtocolError,
     StreamProgress,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "HaltError",
     "ProtocolError",
     "StreamProgress",
+    "Profile",
     "Capabilities",
     "Transport",
     "FakeTransport",

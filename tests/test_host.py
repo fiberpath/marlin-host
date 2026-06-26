@@ -106,6 +106,105 @@ def test_connect_detects_halt_during_boot() -> None:
     assert host.is_halted
 
 
+def _m115_responder(*caps: str, ok: str = "ok", firmware: str = "FIRMWARE_NAME:Marlin 2.1.2.x"):
+    """Responder that answers M115 with a firmware/cap block and probes with `ok`."""
+
+    def responder(line: str) -> list[str]:
+        if line == "M115":
+            return [firmware, *caps, ok]
+        return ["ok"] if "M110" in line else []
+
+    return responder
+
+
+def test_connect_negotiates_profile_from_m115() -> None:
+    t = FakeTransport(_m115_responder("Cap:EMERGENCY_PARSER:1", "Cap:AUTOREPORT_TEMP:0"))
+    t.feed("start", "wait")  # ready via banner; negotiation then queries M115
+    host = MarlinHost(t)
+    host.connect()
+    assert host.profile is not None
+    assert "Marlin" in host.profile.firmware
+    assert host.profile.has("EMERGENCY_PARSER")
+    assert host.profile.emergency_stop_immediate
+    assert not host.profile.has("AUTOREPORT_TEMP")  # reported disabled -> off
+    assert not host.profile.has("SDCARD")  # never reported (sparse report) -> off
+
+
+def test_connect_infers_advanced_ok_from_ok_fields() -> None:
+    t = FakeTransport(_m115_responder(ok="ok N0 P15 B4"))  # ADVANCED_OK form
+    t.feed("start", "wait")
+    host = MarlinHost(t)
+    host.connect()
+    assert host.profile is not None and host.profile.advanced_ok
+
+
+def test_connect_infers_no_advanced_ok_from_bare_ok() -> None:
+    t = FakeTransport(_m115_responder())  # bare `ok`
+    t.feed("start", "wait")
+    host = MarlinHost(t)
+    host.connect()
+    assert host.profile is not None and not host.profile.advanced_ok
+
+
+def test_connect_advanced_ok_override_beats_inference() -> None:
+    t = FakeTransport(_m115_responder())  # board emits bare `ok`...
+    t.feed("start", "wait")
+    host = MarlinHost(t)
+    host.connect(advanced_ok=True)  # ...but the caller declares ADVANCED_OK
+    assert host.profile is not None and host.profile.advanced_ok
+
+
+def test_connect_advanced_ok_false_override_suppresses_inference() -> None:
+    t = FakeTransport(_m115_responder(ok="ok N0 P15 B4"))  # board emits ADVANCED_OK...
+    t.feed("start", "wait")
+    host = MarlinHost(t)
+    host.connect(advanced_ok=False)  # ...but the caller forces it off
+    assert host.profile is not None and not host.profile.advanced_ok
+
+
+def test_connect_emits_wait_when_idle_is_declared() -> None:
+    t = FakeTransport(_m115_responder())
+    t.feed("start", "wait")
+    host = MarlinHost(t)
+    host.connect(emits_wait_when_idle=True)
+    assert host.profile is not None and host.profile.emits_wait_when_idle
+
+
+def test_connect_tolerates_silent_m115() -> None:
+    # Ready via the M110 probe, but the board never answers M115: empty profile,
+    # still connected (readiness is already proven — don't fail the connection).
+    t = FakeTransport(responder=lambda line: ["ok"] if "M110" in line else [])
+    host = MarlinHost(t)
+    host.connect()
+    assert host.is_connected
+    assert host.profile is not None
+    assert host.profile.firmware == ""
+    assert not host.profile.has("EEPROM")
+
+
+def test_connect_negotiate_false_skips_m115() -> None:
+    t = FakeTransport()
+    t.feed("start", "wait")
+    host = MarlinHost(t)
+    host.connect(negotiate=False)
+    assert host.is_connected
+    assert host.profile is None
+    assert not any("M115" in w for w in t.written)
+
+
+def test_connect_raises_halt_when_m115_reports_kill() -> None:
+    def responder(line: str) -> list[str]:
+        return ["Error:Printer halted. kill() called!"] if line == "M115" else []
+
+    t = FakeTransport(responder)
+    t.feed("start", "wait")
+    host = MarlinHost(t)
+    with pytest.raises(HaltError):
+        host.connect()
+    assert host.is_halted
+    assert not host.is_connected
+
+
 def test_send_returns_ok_and_writes_command() -> None:
     t = FakeTransport(responder=lambda _line: ["ok"])
     host = MarlinHost(t)
