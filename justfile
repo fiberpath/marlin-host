@@ -35,6 +35,18 @@ check: fmt-check lint typecheck
 test:
     uv run pytest
 
+# Fetch the pinned Marlin source files codegen needs (into gitignored vendor/)
+fetch-marlin:
+    uv run python scripts/fetch_marlin.py
+
+# Regenerate marlin_host/_constants.py from the pinned Marlin source
+codegen: fetch-marlin
+    uv run python scripts/gen_constants.py
+
+# Verify the committed constants match the pinned source (CI/release drift gate)
+codegen-check: codegen
+    git diff --exit-code marlin_host/_constants.py
+
 # Remove build artifacts
 clean:
     rm -rf .venv dist .pytest_cache .ruff_cache

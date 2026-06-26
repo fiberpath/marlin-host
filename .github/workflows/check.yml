@@ -43,3 +43,24 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+  codegen:
+    # Re-run the pinned fetch + generation and fail if the committed constants
+    # drift from the Marlin source. Reproducible: the ref is pinned by SHA.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Fetch pinned Marlin source
+        run: uv run python scripts/fetch_marlin.py
+
+      - name: Regenerate constants
+        run: uv run python scripts/gen_constants.py
+
+      - name: Fail on drift
+        run: git diff --exit-code marlin_host/_constants.py

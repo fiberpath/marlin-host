@@ -5,10 +5,11 @@ line into a structured :class:`MarlinResponse`. This is the foundational
 contract of the library: instead of ad-hoc string matching scattered across a
 host implementation, every device->host line is mapped to one explicit taxonomy.
 
-The taxonomy and the exact literals are grounded in the Marlin 2.1.x firmware
-source (the binding host-protocol contract): ``ok``/ADVANCED_OK, ``Resend:``,
-``Error:``, halt/``kill()``, ``echo:busy:`` keepalive, ``//action:``, M115
-``Cap:``, M114/M105 reports, ``start``/``wait``.
+The exact literals come from :mod:`marlin_host._constants`, which is generated
+from the pinned Marlin firmware source (``just codegen``) — the binding
+host-protocol contract: ``ok``/ADVANCED_OK, ``Resend:``, ``Error:``,
+halt/``kill()``, ``echo:busy:`` keepalive, ``//action:``, M115 ``Cap:``,
+M114/M105 reports, ``start``/``wait``.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
+
+from . import _constants as c
 
 __all__ = ["MarlinResponseKind", "MarlinResponse", "parse_response"]
 
@@ -76,6 +79,8 @@ _REPORT_FIELD = re.compile(r"([A-Za-z@][\w@]*):(-?\d+(?:\.\d+)?)")
 # Bare `LetterNumber` ADVANCED_OK fields, e.g. N12, P15, B3.
 _ADVANCED_OK_FIELD = re.compile(r"^([A-Za-z])(-?\d+(?:\.\d+)?)$")
 
+_BUSY = c.ECHO_PREFIX + c.BUSY_PREFIX  # "echo:busy:"
+
 
 def _report_fields(text: str) -> dict[str, float]:
     return {m.group(1): float(m.group(2)) for m in _REPORT_FIELD.finditer(text)}
@@ -104,10 +109,10 @@ def parse_response(line: str) -> MarlinResponse:
     if not stripped:
         return result(MarlinResponseKind.UNKNOWN)
 
-    if stripped.startswith("//action:"):
-        return result(MarlinResponseKind.ACTION, action=stripped[len("//action:") :].strip())
+    if stripped.startswith(c.ACTION_PREFIX):
+        return result(MarlinResponseKind.ACTION, action=stripped[len(c.ACTION_PREFIX) :].strip())
 
-    if stripped.startswith("Resend:"):
+    if stripped.startswith(c.RESEND):
         match = re.search(r"\d+", stripped)
         return result(
             MarlinResponseKind.RESEND,
@@ -116,28 +121,32 @@ def parse_response(line: str) -> MarlinResponse:
 
     # Halt is a fatal Error: line; detect it before the generic Error branch.
     if "kill()" in stripped or "halted" in stripped.lower():
-        message = stripped[len("Error:") :] if stripped.startswith("Error:") else stripped
+        message = (
+            stripped[len(c.ERROR_PREFIX) :] if stripped.startswith(c.ERROR_PREFIX) else stripped
+        )
         return result(MarlinResponseKind.HALT, message=message)
 
-    if stripped.startswith("Error:"):
-        return result(MarlinResponseKind.ERROR, message=stripped[len("Error:") :])
+    if stripped.startswith(c.ERROR_PREFIX):
+        return result(MarlinResponseKind.ERROR, message=stripped[len(c.ERROR_PREFIX) :])
 
-    if stripped.startswith("echo:busy:"):
-        return result(MarlinResponseKind.BUSY, message=stripped[len("echo:busy:") :].strip())
+    if stripped.startswith(_BUSY):
+        return result(MarlinResponseKind.BUSY, message=stripped[len(_BUSY) :].strip())
 
-    if stripped.startswith("echo:"):
-        return result(MarlinResponseKind.ECHO, message=stripped[len("echo:") :])
+    if stripped.startswith(c.ECHO_PREFIX):
+        return result(MarlinResponseKind.ECHO, message=stripped[len(c.ECHO_PREFIX) :])
 
-    if stripped.startswith("Cap:"):
-        name, _, flag = stripped[len("Cap:") :].rpartition(":")
+    if stripped.startswith(c.CAP_PREFIX):
+        name, _, flag = stripped[len(c.CAP_PREFIX) :].rpartition(":")
         return result(MarlinResponseKind.CAPABILITY, capability=(name, flag == "1"))
 
-    if stripped.startswith("FIRMWARE_NAME:"):
+    if stripped.startswith(c.FIRMWARE_PREFIX):
         return result(MarlinResponseKind.FIRMWARE, message=stripped)
 
-    if stripped == "ok" or stripped.startswith("ok "):
-        return result(MarlinResponseKind.OK, fields=_ok_fields(stripped[len("ok") :].strip()))
+    if stripped == c.OK or stripped.startswith(c.OK + " "):
+        return result(MarlinResponseKind.OK, fields=_ok_fields(stripped[len(c.OK) :].strip()))
 
+    # M105/M114 report bodies use field labels (temperature.cpp / motion.cpp),
+    # not language.h literals.
     if stripped.startswith("T:"):
         return result(MarlinResponseKind.TEMPERATURE, fields=_report_fields(stripped))
 
@@ -148,10 +157,10 @@ def parse_response(line: str) -> MarlinResponse:
             fields=_report_fields(stripped.split("Count", 1)[0]),
         )
 
-    if stripped == "start":
+    if stripped == c.START:
         return result(MarlinResponseKind.START)
 
-    if stripped == "wait":
+    if stripped == c.WAIT:
         return result(MarlinResponseKind.WAIT)
 
     return result(MarlinResponseKind.UNKNOWN)
