@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from .framing import checksum, frame, reset_line_number
-from .host import HaltError, HostError, MarlinHost, ProtocolError
+from .host import (
+    Capabilities,
+    HaltError,
+    HostError,
+    MarlinHost,
+    ProtocolError,
+    StreamProgress,
+)
 from .protocol import MarlinResponse, MarlinResponseKind, parse_response
 from .transport import FakeTransport, Transport
 
@@ -12,6 +19,8 @@ __all__ = [
     "HostError",
     "HaltError",
     "ProtocolError",
+    "StreamProgress",
+    "Capabilities",
     "Transport",
     "FakeTransport",
     "parse_response",
