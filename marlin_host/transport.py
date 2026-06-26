@@ -47,6 +47,37 @@ class FakeTransport:
         self.written: list[str] = []
         self.closed = False
 
+    @classmethod
+    def from_trace(cls, trace: Iterable[str]) -> FakeTransport:
+        """Build a transport that replays a recorded session (see :class:`TracingTransport`).
+
+        Lines are ``> <tx>`` (host→device) and ``< <rx>`` (device→host). Received
+        lines before the first ``>`` are pre-fed (e.g. the ``start`` banner); the
+        rx lines after each ``>`` are returned on the host's Nth write — so a
+        captured session replays as a conformance fixture, hardware-free.
+        """
+        leading: list[str] = []
+        groups: list[list[str]] = []
+        current: list[str] | None = None
+        for raw in trace:
+            line = raw.rstrip("\r\n")
+            if line.startswith("> "):
+                current = []
+                groups.append(current)
+            elif line.startswith("< "):
+                (current if current is not None else leading).append(line[2:])
+        index = 0
+
+        def responder(_tx: str) -> list[str]:
+            nonlocal index
+            replies = groups[index] if index < len(groups) else []
+            index += 1
+            return replies
+
+        transport = cls(responder=responder)
+        transport.feed(*leading)
+        return transport
+
     def feed(self, *lines: str) -> None:
         """Queue device→host lines to be returned by :meth:`read_line`."""
         self._incoming.extend(lines)
