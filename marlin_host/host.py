@@ -32,6 +32,7 @@ __all__ = [
     "HaltError",
     "ProtocolError",
     "StreamProgress",
+    "Profile",
     "Capabilities",
 ]
 
@@ -74,15 +75,37 @@ class StreamProgress:
 
 
 @dataclass(frozen=True)
-class Capabilities:
-    """Parsed M115 report: firmware line + capability flags."""
+class Profile:
+    """A resolved Marlin dialect: one concrete build's host-facing behavior.
+
+    The *negotiated* half — ``firmware`` and ``caps`` — is what
+    :meth:`MarlinHost.capabilities` parses from the M115 report.
+    :meth:`MarlinHost.connect` additionally infers ``advanced_ok`` from the first
+    ``ok`` and applies any caller overrides, exposing the result at
+    :attr:`MarlinHost.profile`. A cap absent from the report is treated as off
+    (Marlin only advertises a cap when its build enables it).
+    """
 
     firmware: str
     caps: Mapping[str, bool]
+    # Dialect variants that Marlin does NOT report as caps:
+    advanced_ok: bool = False  # `ok N.. P.. B..` (queue.cpp ADVANCED_OK); inferred at connect
+    emits_wait_when_idle: bool = False  # `wait` heartbeat when idle (NO_TIMEOUTS); declared
 
     def has(self, name: str) -> bool:
         """True if the controller reported capability ``name`` enabled."""
         return self.caps.get(name, False)
+
+    @property
+    def emergency_stop_immediate(self) -> bool:
+        """True iff the build has ``EMERGENCY_PARSER`` — without it, an M112 is
+        parsed in order and only acts once buffered motion drains, so a caller
+        cannot treat :meth:`MarlinHost.emergency_stop` as truly instantaneous."""
+        return self.has("EMERGENCY_PARSER")
+
+
+# Backwards-compatible alias: the negotiated M115 view is just a Profile.
+Capabilities = Profile
 
 
 def _is_line_error(message: str | None) -> bool:
@@ -113,10 +136,17 @@ class MarlinHost:
         self._connected = False
         self._paused = False
         self._stopped = False
+        self._profile: Profile | None = None
 
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    @property
+    def profile(self) -> Profile | None:
+        """The dialect profile resolved at :meth:`connect` (``None`` before
+        connecting, or when connected with ``negotiate=False``)."""
+        return self._profile
 
     @property
     def is_halted(self) -> bool:
@@ -130,20 +160,39 @@ class MarlinHost:
     def line_number(self) -> int:
         return self._line_number
 
-    def connect(self) -> None:
-        """Establish that the controller is up and ready.
+    def connect(
+        self,
+        *,
+        negotiate: bool = True,
+        advanced_ok: bool | None = None,
+        emits_wait_when_idle: bool = False,
+    ) -> None:
+        """Establish that the controller is up and ready, and resolve its profile.
 
-        Prefers Marlin's unconditional ``start`` boot line (emitted after a reset)
-        as the positive ready signal, draining the rest of the banner until the
-        stream goes quiet. For an already-running board — one that ignored a DTR
-        reset, or whose ``start`` was missed — it actively probes with a framed
-        ``M110 N0`` and accepts the resulting ``ok``, which also syncs line
-        numbering. Raises :class:`HostError` if the controller never responds
+        Readiness: prefer Marlin's unconditional ``start`` boot line (emitted after
+        a reset), draining the rest of the banner until quiet. For an already-running
+        board — one that ignored a DTR reset, or whose ``start`` was missed — actively
+        probe with a framed ``M110 N0`` and accept the resulting ``ok``, which also
+        syncs line numbering. Raise :class:`HostError` if the controller never responds
         (wrong port/baud, no power) instead of falsely reporting ready.
+
+        Profile: unless ``negotiate=False``, query M115 and expose the resolved
+        :class:`Profile` at :attr:`profile` — firmware + capability flags, with
+        ``advanced_ok`` inferred from the first ``ok`` (override it, and
+        ``emits_wait_when_idle``, via the keyword args). Negotiation is tolerant: a
+        board that does not answer M115 yields an empty profile rather than failing
+        the connection (readiness is already proven by this point).
         """
+        self._connected = False
         self._halted = False
         self._line_number = 0
+        self._establish_ready()
+        profile = self._negotiate(advanced_ok, emits_wait_when_idle) if negotiate else None
+        self._connected = True
+        self._profile = profile
 
+    def _establish_ready(self) -> None:
+        """Block until the controller proves it is ready, or raise."""
         # Phase 1: read the boot stream. An `ok`/report line proves readiness
         # outright; the `start`/`Marlin` banner then quiet == ready; a `wait`/`busy`
         # keepalive is a sign of life — ready if we already saw the banner, else
@@ -153,16 +202,13 @@ class MarlinHost:
         while (line := self._t.read_line(self._startup_timeout)) is not None:
             resp = self._parse_connect(line)
             if self._is_ready(resp):
-                self._connected = True
                 return
             if resp.is_keepalive:
                 if saw_banner:
-                    self._connected = True
                     return
                 break
             saw_banner = saw_banner or _is_boot_banner(line)
         if saw_banner:
-            self._connected = True
             return
 
         # Phase 2: nothing decisive arrived — probe a running / reset-ignoring board.
@@ -170,11 +216,54 @@ class MarlinHost:
             self._t.write_line(reset_line_number(0))  # framed M110 N0 forces an `ok`
             while (line := self._t.read_line(self._startup_timeout)) is not None:
                 if self._is_ready(self._parse_connect(line)):
-                    self._connected = True
                     return
         raise HostError(
             "controller did not respond on connect — check the port, baud rate, and power"
         )
+
+    def _negotiate(self, advanced_ok: bool | None, emits_wait_when_idle: bool) -> Profile:
+        """Assemble the dialect profile from M115 plus caller overrides.
+
+        minimal: the "declared baseline ∩ negotiated" intersection degenerates to
+        "negotiated caps, absent ⇒ off" — enumerating every cap the pinned firmware
+        *could* advertise has no consumer (the safe-degradation rule treats an absent
+        cap as off regardless). Add a per-version baseline only if something needs to
+        distinguish "cap not in this firmware" from "cap disabled in this build".
+        """
+        firmware, caps, terminal = self._query_m115()
+        if advanced_ok is None:
+            # ADVANCED_OK appends `P<planner> B<block>` to every `ok`; `P` is unique
+            # to that form (M105/M114 reports never carry a bare `P`).
+            advanced_ok = (
+                terminal is not None and terminal.fields is not None and "P" in terminal.fields
+            )
+        return Profile(
+            firmware=firmware,
+            caps=caps,
+            advanced_ok=advanced_ok,
+            emits_wait_when_idle=emits_wait_when_idle,
+        )
+
+    def _query_m115(self) -> tuple[str, dict[str, bool], MarlinResponse | None]:
+        """Send M115 (bare — a query must not consume a reliable line number) and
+        gather firmware + caps + the terminal ``ok`` (``None`` if the board is silent)."""
+        firmware = ""
+        caps: dict[str, bool] = {}
+        terminal: MarlinResponse | None = None
+        self._t.write_line("M115")
+        while (line := self._t.read_line(self._startup_timeout)) is not None:
+            resp = parse_response(line)
+            if resp.is_fatal:
+                self._halted = True
+                raise HaltError(resp.message or resp.raw)
+            if resp.kind is MarlinResponseKind.FIRMWARE:
+                firmware = resp.message or resp.raw
+            elif resp.kind is MarlinResponseKind.CAPABILITY and resp.capability is not None:
+                caps[resp.capability[0]] = resp.capability[1]
+            elif resp.is_ack:
+                terminal = resp
+                break
+        return firmware, caps, terminal
 
     def _parse_connect(self, line: str) -> MarlinResponse:
         """Parse a line during connect; raise :class:`HaltError` on a fatal line."""
@@ -217,17 +306,17 @@ class MarlinHost:
         self._await_terminal(command, collected)
         return collected
 
-    def capabilities(self) -> Capabilities:
-        """Query M115 and return the parsed firmware line + capability flags."""
-        firmware = ""
-        caps: dict[str, bool] = {}
-        for resp in self.query("M115"):
-            if resp.kind is MarlinResponseKind.FIRMWARE:
-                firmware = resp.message or resp.raw
-            elif resp.kind is MarlinResponseKind.CAPABILITY and resp.capability is not None:
-                name, enabled = resp.capability
-                caps[name] = enabled
-        return Capabilities(firmware=firmware, caps=caps)
+    def capabilities(self) -> Profile:
+        """Query M115 and return the negotiated firmware line + capability flags.
+
+        This is the negotiated half of the :class:`Profile` seam; :meth:`connect`
+        wraps the same exchange to also infer ``advanced_ok``. Tolerant of a silent
+        board (returns an empty profile rather than raising).
+        """
+        if self._halted:
+            raise HaltError("controller is halted; a reset is required")
+        firmware, caps, _ = self._query_m115()
+        return Profile(firmware=firmware, caps=caps)
 
     def stream(
         self, program: Iterable[str], *, poll_interval: float = DEFAULT_PAUSE_POLL
@@ -262,7 +351,12 @@ class MarlinHost:
         self._stopped = True
 
     def emergency_stop(self) -> None:
-        """Send M112 out-of-band (no framing, no waiting) and mark the host halted."""
+        """Send M112 out-of-band (no framing, no waiting) and mark the host halted.
+
+        Truly immediate only on a build with ``EMERGENCY_PARSER`` — check
+        :attr:`Profile.emergency_stop_immediate` (via :attr:`profile`). Without it,
+        M112 is parsed in order and acts only once buffered motion drains.
+        """
         self._t.write_line("M112")
         self._halted = True
 

@@ -8,6 +8,10 @@ from marlin_host import FakeTransport, MarlinHost, MarlinResponseKind, TracingTr
 def test_from_trace_replays_a_recorded_session() -> None:
     trace = [
         "< start",
+        "> M115",
+        "< FIRMWARE_NAME:Marlin 2.1.2.x",
+        "< Cap:EEPROM:1",
+        "< ok",
         "> G28",
         "< echo:busy: processing",
         "< ok",
@@ -16,7 +20,9 @@ def test_from_trace_replays_a_recorded_session() -> None:
         "< ok",
     ]
     host = MarlinHost(FakeTransport.from_trace(trace))
-    host.connect()  # drains the leading `start`
+    host.connect()  # drains the leading `start`, then negotiates via M115
+    assert host.profile is not None
+    assert host.profile.has("EEPROM")
     assert host.send("G28").is_ack
 
     report = host.query("M114")
