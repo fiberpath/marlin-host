@@ -22,3 +22,27 @@ developing — they are intentionally *not* version-controlled:
 
 Anything intended to ship — the library, its tests, and curated docs — lives in
 tracked directories, never in `working/`, `_reference/`, or `planning/`.
+
+## Develop
+
+Requires [`uv`](https://docs.astral.sh/uv/) and [`just`](https://just.systems/).
+
+```sh
+just setup        # uv sync
+just check        # ruff format-check + lint + pyright (CI-equivalent)
+just test         # pytest
+```
+
+## Usage
+
+```python
+from marlin_host import parse_response
+
+resp = parse_response("ok N12 P15 B3")
+resp.is_ack          # True
+resp.fields          # {'N': 12.0, 'P': 15.0, 'B': 3.0}
+
+parse_response("Resend: 13").resend_line     # 13
+parse_response("echo:busy: processing").is_keepalive   # True
+```
+
