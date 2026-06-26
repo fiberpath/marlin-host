@@ -43,11 +43,36 @@ def test_read_line_decodes_and_strips_or_returns_none_on_timeout() -> None:
     assert fake.timeout == 1.0
 
 
-def test_reset_toggles_dtr() -> None:
-    fake = _fake_serial()
-    with patch("serial.serial_for_url", return_value=fake), patch("time.sleep"):
+def test_reset_pulses_dtr_assert_then_release_without_flushing() -> None:
+    events: list[tuple[str, object]] = []
+
+    class _RecordingSerial:
+        def __init__(self) -> None:
+            self._dtr: bool | None = None
+
+        @property
+        def dtr(self) -> bool | None:
+            return self._dtr
+
+        @dtr.setter
+        def dtr(self, value: bool) -> None:
+            self._dtr = value
+            events.append(("dtr", value))
+
+        def reset_input_buffer(self) -> None:
+            events.append(("flush", None))
+
+        def close(self) -> None:
+            events.append(("close", None))
+
+    rec = _RecordingSerial()
+    with patch("serial.serial_for_url", return_value=rec), patch("time.sleep") as sleep:
         t = SerialTransport("loop://", reset_on_open=True)
-    fake.reset_input_buffer.assert_called_once()
-    assert fake.dtr is True  # left asserted after the low→high toggle
+
+    # printrun sequence: assert (True) -> hold -> release (False); never left asserted.
+    assert [v for kind, v in events if kind == "dtr"] == [True, False]
+    # Don't flush — connect() needs to see the `start` greeting.
+    assert ("flush", None) not in events
+    sleep.assert_called_once()  # held between assert and release
     t.close()
-    fake.close.assert_called_once()
+    assert ("close", None) in events

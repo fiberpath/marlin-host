@@ -9,11 +9,63 @@ from marlin_host.host import HaltError, HostError, ProtocolError
 
 
 def test_connect_consumes_startup_banner_until_idle() -> None:
+    # Fresh boot: `start` is the positive ready signal; drain the rest of the
+    # banner (Marlin emits the version line bare, no `echo:` prefix).
     t = FakeTransport()
-    t.feed("start", "echo:Marlin 2.1.2.x", "echo:SD card ok")
+    t.feed("start", "Marlin 2.1.2.x", "echo: Free Memory: 4096")
     host = MarlinHost(t)
     host.connect()
     assert host.is_connected
+
+
+def test_connect_returns_ready_on_banner_then_wait_without_probing() -> None:
+    # Booted then idle: `start` + a `wait` keepalive is enough — no probe needed.
+    t = FakeTransport()
+    t.feed("start", "wait")
+    host = MarlinHost(t)
+    host.connect()
+    assert host.is_connected
+    assert not any("M110" in w for w in t.written)
+
+
+def test_connect_probes_idle_board_streaming_wait() -> None:
+    # An already-running idle board emits `wait` keepalives (NO_TIMEOUTS) with no
+    # boot banner. The host must treat that as a sign of life and probe for a
+    # definitive `ok` rather than spinning in the banner-drain loop forever.
+    t = FakeTransport(responder=lambda line: ["ok"] if "M110" in line else [])
+    t.feed("wait")
+    host = MarlinHost(t)
+    host.connect()
+    assert host.is_connected
+    assert any("M110 N0" in w for w in t.written)
+
+
+def test_connect_probes_already_running_board() -> None:
+    # No boot banner (board was already up / ignored DTR): the framed M110 hello
+    # must elicit an `ok` for the host to consider it ready.
+    t = FakeTransport(responder=lambda line: ["ok"] if "M110" in line else [])
+    host = MarlinHost(t)
+    host.connect()
+    assert host.is_connected
+    assert any("M110 N0" in w for w in t.written)
+
+
+def test_connect_raises_when_controller_unresponsive() -> None:
+    # Nothing on the wire and no answer to the probe -> fail loudly, not "ready".
+    t = FakeTransport()
+    host = MarlinHost(t, connect_probes=2)
+    with pytest.raises(HostError):
+        host.connect()
+    assert not host.is_connected
+
+
+def test_connect_detects_halt_during_boot() -> None:
+    t = FakeTransport()
+    t.feed("Error:Printer halted. kill() called!")
+    host = MarlinHost(t)
+    with pytest.raises(HaltError):
+        host.connect()
+    assert host.is_halted
 
 
 def test_send_returns_ok_and_writes_command() -> None:

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from . import _constants as c
-from .framing import frame
+from .framing import frame, reset_line_number
 from .protocol import MarlinResponse, MarlinResponseKind, parse_response
 
 if TYPE_CHECKING:
@@ -39,9 +39,16 @@ DEFAULT_IDLE_TIMEOUT = 10.0
 DEFAULT_STARTUP_TIMEOUT = 2.0
 DEFAULT_MAX_RESENDS = 5
 DEFAULT_PAUSE_POLL = 0.05
+DEFAULT_CONNECT_PROBES = 3
 
 # Recoverable line-protocol errors: Marlin emits one of these, then a `Resend:`.
 _LINE_ERRORS = (c.ERR_CHECKSUM_MISMATCH, c.ERR_NO_CHECKSUM, c.ERR_LINE_NO)
+
+
+def _is_boot_banner(line: str) -> bool:
+    """True for Marlin's unconditional boot lines (``start`` / ``Marlin <ver>``)."""
+    stripped = line.strip()
+    return stripped == "start" or stripped.startswith("Marlin ")
 
 
 class HostError(RuntimeError):
@@ -93,12 +100,14 @@ class MarlinHost:
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
         reliable: bool = False,
         max_resends: int = DEFAULT_MAX_RESENDS,
+        connect_probes: int = DEFAULT_CONNECT_PROBES,
     ) -> None:
         self._t = transport
         self._idle_timeout = idle_timeout
         self._startup_timeout = startup_timeout
         self._reliable = reliable
         self._max_resends = max_resends
+        self._connect_probes = connect_probes
         self._line_number = 0
         self._halted = False
         self._connected = False
@@ -122,17 +131,66 @@ class MarlinHost:
         return self._line_number
 
     def connect(self) -> None:
-        """Drain the startup banner until the controller goes idle (ready).
+        """Establish that the controller is up and ready.
 
-        Consumes any ``start`` banner and config echoes; returns once a read
-        times out (no more startup chatter). An already-running controller that
-        emits nothing simply returns immediately.
+        Prefers Marlin's unconditional ``start`` boot line (emitted after a reset)
+        as the positive ready signal, draining the rest of the banner until the
+        stream goes quiet. For an already-running board — one that ignored a DTR
+        reset, or whose ``start`` was missed — it actively probes with a framed
+        ``M110 N0`` and accepts the resulting ``ok``, which also syncs line
+        numbering. Raises :class:`HostError` if the controller never responds
+        (wrong port/baud, no power) instead of falsely reporting ready.
         """
         self._halted = False
         self._line_number = 0
-        while self._t.read_line(self._startup_timeout) is not None:
-            pass
-        self._connected = True
+
+        # Phase 1: read the boot stream. An `ok`/report line proves readiness
+        # outright; the `start`/`Marlin` banner then quiet == ready; a `wait`/`busy`
+        # keepalive is a sign of life — ready if we already saw the banner, else
+        # break to the probe (an idle board streams `wait` forever, so we must not
+        # wait for silence here).
+        saw_banner = False
+        while (line := self._t.read_line(self._startup_timeout)) is not None:
+            resp = self._parse_connect(line)
+            if self._is_ready(resp):
+                self._connected = True
+                return
+            if resp.is_keepalive:
+                if saw_banner:
+                    self._connected = True
+                    return
+                break
+            saw_banner = saw_banner or _is_boot_banner(line)
+        if saw_banner:
+            self._connected = True
+            return
+
+        # Phase 2: nothing decisive arrived — probe a running / reset-ignoring board.
+        for _ in range(self._connect_probes):
+            self._t.write_line(reset_line_number(0))  # framed M110 N0 forces an `ok`
+            while (line := self._t.read_line(self._startup_timeout)) is not None:
+                if self._is_ready(self._parse_connect(line)):
+                    self._connected = True
+                    return
+        raise HostError(
+            "controller did not respond on connect — check the port, baud rate, and power"
+        )
+
+    def _parse_connect(self, line: str) -> MarlinResponse:
+        """Parse a line during connect; raise :class:`HaltError` on a fatal line."""
+        resp = parse_response(line)
+        if resp.is_fatal:
+            self._halted = True
+            raise HaltError(resp.message or resp.raw)
+        return resp
+
+    @staticmethod
+    def _is_ready(resp: MarlinResponse) -> bool:
+        """True if ``resp`` proves the controller is ready to accept commands."""
+        return resp.is_ack or resp.kind in (
+            MarlinResponseKind.TEMPERATURE,
+            MarlinResponseKind.POSITION,
+        )
 
     def send(self, command: str) -> MarlinResponse:
         """Send one command and return its terminal ``ok`` response.
