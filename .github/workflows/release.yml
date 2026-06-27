@@ -1,0 +1,115 @@
+name: Release
+
+# Manual, trusted-publishing release for the pure-Python marlin-host library.
+# No SBOM matrix / no installers (zero runtime deps, no GUI) — just:
+# validate version -> build -> tag -> GitHub Release -> publish to PyPI.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release (e.g., 0.1.0)
+        required: true
+        type: string
+      prerelease:
+        description: Mark as pre-release
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # create the tag + GitHub Release
+  id-token: write # PyPI trusted publishing (OIDC)
+
+jobs:
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need all tags for the "tag is free" check
+
+      - name: Validate version format
+        id: check
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "Error: invalid version. Use semver (e.g. 0.1.0 or 0.1.0-rc.1)"
+            exit 1
+          fi
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check tag is free
+        run: |
+          TAG="${{ steps.check.outputs.tag }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Error: tag $TAG already exists"
+            exit 1
+          fi
+
+      - name: Verify version matches sources
+        run: |
+          VERSION="${{ inputs.version }}"
+          PYPROJECT=$(grep -E '^version = ' pyproject.toml | head -1 | cut -d'"' -f2)
+          PKG=$(grep -E '^__version__ = ' marlin_host/__init__.py | head -1 | cut -d'"' -f2)
+          if [ "$VERSION" != "$PYPROJECT" ]; then
+            echo "Error: input ($VERSION) != pyproject.toml ($PYPROJECT)"
+            exit 1
+          fi
+          if [ "$VERSION" != "$PKG" ]; then
+            echo "Error: input ($VERSION) != marlin_host.__version__ ($PKG)"
+            exit 1
+          fi
+          echo "Version $VERSION consistent across sources"
+
+  release:
+    name: Build, Release, Publish
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/marlin-host/
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build distribution
+        run: uv build
+
+      - name: Verify artifacts
+        run: |
+          if [ -z "$(ls -A dist 2>/dev/null)" ]; then
+            echo "Error: no distribution files in dist/"
+            exit 1
+          fi
+          ls -lh dist/
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ needs.validate.outputs.tag }}" -m "Release ${{ inputs.version }}"
+          git push origin "${{ needs.validate.outputs.tag }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate.outputs.tag }}
+          name: marlin-host ${{ inputs.version }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ inputs.prerelease }}
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true
