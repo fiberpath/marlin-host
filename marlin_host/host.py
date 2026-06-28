@@ -15,7 +15,7 @@ pause/resume/stop are host-side: pausing simply stops sending the next line.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -124,6 +124,7 @@ class MarlinHost:
         reliable: bool = False,
         max_resends: int = DEFAULT_MAX_RESENDS,
         connect_probes: int = DEFAULT_CONNECT_PROBES,
+        on_action: Callable[[MarlinResponse], None] | None = None,
     ) -> None:
         self._t = transport
         self._idle_timeout = idle_timeout
@@ -131,6 +132,7 @@ class MarlinHost:
         self._reliable = reliable
         self._max_resends = max_resends
         self._connect_probes = connect_probes
+        self._on_action = on_action
         self._line_number = 0
         self._halted = False
         self._connected = False
@@ -428,6 +430,12 @@ class MarlinHost:
                     continue  # a `Resend:` follows this recoverable line error
                 raise ProtocolError(resp.message or resp.raw)
 
-            # echo / reports / start / wait / unknown — not terminal; collect if asked.
+            # Board-initiated host action (//action:pause/resume/cancel/prompt, e.g.
+            # M600/runout/LCD). Non-terminal; deliver to the consumer (it would
+            # otherwise be silently dropped) before falling through to collect.
+            if resp.kind is MarlinResponseKind.ACTION and self._on_action is not None:
+                self._on_action(resp)
+
+            # echo / reports / start / wait / unknown / action — not terminal; collect if asked.
             if collect is not None:
                 collect.append(resp)
