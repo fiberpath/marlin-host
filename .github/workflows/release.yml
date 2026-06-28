@@ -42,12 +42,16 @@ jobs:
           fi
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Check tag is free
+      - name: Note tag status (retry-safe)
         run: |
+          # Don't fail on an existing tag: a release can fail late (e.g. PyPI) with
+          # the tag/Release already created. Re-running must complete the publish,
+          # so tag creation, the Release, and the upload are all made idempotent.
           TAG="${{ steps.check.outputs.tag }}"
           if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Error: tag $TAG already exists"
-            exit 1
+            echo "::notice::tag $TAG already exists — treating this run as a retry"
+          else
+            echo "tag $TAG is new"
           fi
 
       - name: Verify version matches sources
@@ -90,12 +94,17 @@ jobs:
           fi
           ls -lh dist/
 
-      - name: Create and push tag
+      - name: Create and push tag (if new)
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ needs.validate.outputs.tag }}" -m "Release ${{ inputs.version }}"
-          git push origin "${{ needs.validate.outputs.tag }}"
+          TAG="${{ needs.validate.outputs.tag }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "tag $TAG already exists — skipping creation (retry)"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release ${{ inputs.version }}"
+            git push origin "$TAG"
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -113,3 +122,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           print-hash: true
+          skip-existing: true # idempotent: a retry won't fail if files are already up
