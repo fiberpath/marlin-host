@@ -434,3 +434,20 @@ def test_on_action_fires_during_streaming() -> None:
     )
     list(host.stream(["G1 X1", "G1 X2", "G1 X3"]))
     assert seen == ["paused"]
+
+
+def test_position_reads_the_m114_report() -> None:
+    host = MarlinHost(
+        FakeTransport(
+            responder=lambda _line: ["X:1.00 Y:2.00 Z:0.00 E:0.00 Count X:80 Y:160 Z:0", "ok"]
+        )
+    )
+    pos = host.position()
+    assert pos["X"] == pytest.approx(1.0)
+    assert pos["Y"] == pytest.approx(2.0)
+    assert "Count" not in pos  # the machine-step tail is dropped by the parser
+
+
+def test_position_empty_when_no_report_line() -> None:
+    host = MarlinHost(FakeTransport(responder=lambda _line: ["ok"]))
+    assert host.position() == {}

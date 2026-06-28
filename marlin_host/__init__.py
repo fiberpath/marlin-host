@@ -13,7 +13,14 @@ from .host import (
     StreamProgress,
 )
 from .protocol import MarlinResponse, MarlinResponseKind, parse_response
-from .transport import FakeTransport, SerialTransport, TracingTransport, Transport
+from .transport import (
+    FakeTransport,
+    PortInfo,
+    SerialTransport,
+    TracingTransport,
+    Transport,
+    list_ports,
+)
 
 __all__ = [
     "MarlinHost",
@@ -27,6 +34,8 @@ __all__ = [
     "FakeTransport",
     "SerialTransport",
     "TracingTransport",
+    "PortInfo",
+    "list_ports",
     "parse_response",
     "MarlinResponse",
     "MarlinResponseKind",

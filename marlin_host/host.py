@@ -330,6 +330,20 @@ class MarlinHost:
         """
         return self.send("M105").fields or {}
 
+    def position(self) -> Mapping[str, float]:
+        """Query M114 and return the reported axis position, e.g.
+        ``{'X': 0.0, 'Y': 0.0, 'Z': 0.0, 'E': 0.0}``.
+
+        Symmetric with :meth:`temperatures`. Unlike M105, M114's report is a
+        line *before* ``ok``, so the data comes from the collected report (the
+        machine-step ``Count`` tail is dropped by the parser). Returns an empty
+        mapping if the board reports no position line.
+        """
+        for resp in self.query("M114"):
+            if resp.kind is MarlinResponseKind.POSITION and resp.fields is not None:
+                return resp.fields
+        return {}
+
     def stream(
         self, program: Iterable[str], *, poll_interval: float = DEFAULT_PAUSE_POLL
     ) -> Iterator[StreamProgress]:

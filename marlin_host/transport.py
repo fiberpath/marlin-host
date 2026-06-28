@@ -12,11 +12,47 @@ from __future__ import annotations
 import time
 from collections import deque
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-__all__ = ["Transport", "FakeTransport", "SerialTransport", "TracingTransport"]
+__all__ = [
+    "Transport",
+    "FakeTransport",
+    "SerialTransport",
+    "TracingTransport",
+    "PortInfo",
+    "list_ports",
+]
 
 DEFAULT_BAUD_RATE = 250_000
+
+
+@dataclass(frozen=True)
+class PortInfo:
+    """An available serial port, as reported by the OS."""
+
+    port: str  # device path or URL, e.g. /dev/ttyACM0
+    description: str
+    hwid: str
+
+
+def list_ports() -> list[PortInfo]:
+    """Enumerate available serial ports (requires the ``[serial]`` extra).
+
+    Discovery is a pyserial concern, not host-protocol, but the library already
+    owns the optional pyserial dependency — so this saves every consumer from
+    importing ``serial.tools.list_ports`` themselves.
+    """
+    try:
+        from serial.tools import list_ports as _list_ports
+    except ImportError as exc:  # pragma: no cover - exercised only without the extra
+        raise ImportError(
+            "list_ports requires pyserial: pip install 'marlin-host[serial]'"
+        ) from exc
+    return [
+        PortInfo(port=p.device, description=p.description or "", hwid=p.hwid or "")
+        for p in _list_ports.comports()
+    ]
 
 
 @runtime_checkable
