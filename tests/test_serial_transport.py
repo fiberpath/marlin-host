@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from marlin_host import SerialTransport, Transport
+from marlin_host import PortInfo, SerialTransport, Transport, list_ports
 
 
 def _fake_serial() -> MagicMock:
@@ -102,3 +102,14 @@ def test_reset_with_flush_discards_stale_input_after_the_edge() -> None:
 
     # Flush happens last — after assert(True) and release(False), never before.
     assert events == [("dtr", True), ("dtr", False), ("flush", None)]
+
+
+def test_list_ports_maps_pyserial_comports() -> None:
+    fake = MagicMock(
+        device="/dev/ttyACM0", description="Arduino Mega 2560", hwid="USB VID:PID=2341:0042"
+    )
+    with patch("serial.tools.list_ports.comports", return_value=[fake]):
+        ports = list_ports()
+    assert ports == [
+        PortInfo(port="/dev/ttyACM0", description="Arduino Mega 2560", hwid="USB VID:PID=2341:0042")
+    ]
