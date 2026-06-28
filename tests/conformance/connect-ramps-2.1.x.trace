@@ -1,0 +1,71 @@
+< start
+< Marlin bugfix-2.1.x
+< echo: Last Updated: 2026-01-21 | Author: (MarlinFirmware)
+< echo: Compiled: Jan 21 2026
+< echo: Free Memory: 3590  PlannerBufferBytes: 1328
+< echo:Hardcoded Default Settings Loaded
+< echo:; Linear Units:
+< echo:  G21 ; (mm)
+< echo:; Auto Temp Control:
+< echo:  M104 S210 B250 F0.10
+< echo:; Temperature Units:
+< echo:  M149 C ; Units in Celsius
+< echo:; Filament settings (Disabled):
+< echo:  M200 S0 D1.75
+< echo:; Steps per unit:
+< echo:  M92 X80.00 Y80.00 Z400.00 E500.00
+< echo:; Max feedrates (units/s):
+< echo:  M203 X300.00 Y300.00 Z5.00 E25.00
+< echo:; Max Acceleration (units/s2):
+< echo:  M201 X3000.00 Y3000.00 Z100.00 E10000.00
+< echo:; Acceleration (units/s2) (P<print-accel> R<retract-accel> T<travel-accel>):
+< echo:  M204 P3000.00 R3000.00 T3000.00
+< echo:; Advanced (B<min_segment_time_us> S<min_feedrate> T<min_travel_feedrate> J<junc_dev>):
+< echo:  M205 B20000.00 S0.00 T0.00 J0.01
+< echo:; Home offset:
+< echo:  M206 X0.00 Y0.00 Z0.00
+< echo:; Material heatup parameters:
+< echo:  M145 S0 H180.00 F0
+< echo:  M145 S1 H240.00 F0
+< echo:; Hotend PID:
+< echo:  M301 P22.20 I1.08 D114.00
+> M115
+< FIRMWARE_NAME:Marlin bugfix-2.1.x (Jan 21 2026 20:48:29) SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin PROTOCOL_VERSION:1.0 MACHINE_TYPE:3D Printer KINEMATICS:Cartesian EXTRUDER_COUNT:1 UUID:cede2a2f-41a2-4748-9b12-c55c62f367ff
+< Cap:SERIAL_XON_XOFF:0
+< Cap:BINARY_FILE_TRANSFER:0
+< Cap:EEPROM:0
+< Cap:VOLUMETRIC:1
+< Cap:AUTOREPORT_POS:0
+< Cap:AUTOREPORT_TEMP:1
+< Cap:PROGRESS:0
+< Cap:PRINT_JOB:1
+< Cap:AUTOLEVEL:0
+< Cap:RUNOUT:0
+< Cap:Z_PROBE:0
+< Cap:LEVELING_DATA:0
+< Cap:BUILD_PERCENT:0
+< Cap:SOFTWARE_POWER:0
+< Cap:TOGGLE_LIGHTS:0
+< Cap:CASE_LIGHT_BRIGHTNESS:0
+< Cap:EMERGENCY_PARSER:0
+< Cap:HOST_ACTION_COMMANDS:0
+< Cap:PROMPT_SUPPORT:0
+< Cap:SDCARD:1
+< Cap:MULTI_VOLUME:0
+< Cap:REPEAT:0
+< Cap:SD_WRITE:1
+< Cap:AUTOREPORT_SD_STATUS:0
+< Cap:LONG_FILENAME:0
+< Cap:LFN_WRITE:0
+< Cap:CUSTOM_FIRMWARE_UPLOAD:0
+< Cap:EXTENDED_M20:0
+< Cap:THERMAL_PROTECTION:1
+< Cap:MOTION_MODES:0
+< Cap:ARCS:1
+< Cap:BABYSTEPPING:0
+< Cap:EP_BABYSTEP:0
+< Cap:CHAMBER_TEMPERATURE:0
+< Cap:COOLER_TEMPERATURE:0
+< Cap:MEATPACK:0
+< Cap:CONFIG_EXPORT:0
+< ok
