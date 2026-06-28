@@ -451,3 +451,39 @@ def test_position_reads_the_m114_report() -> None:
 def test_position_empty_when_no_report_line() -> None:
     host = MarlinHost(FakeTransport(responder=lambda _line: ["ok"]))
     assert host.position() == {}
+
+
+def test_send_and_query_are_mutually_exclusive_across_threads() -> None:
+    # The io lock must serialise transport access so a worker streaming and
+    # another thread's manual command never interleave on the wire.
+    import threading
+    import time as _time
+
+    ops: list[str] = []
+
+    class _SlowTransport:
+        def write_line(self, line: str) -> None:
+            ops.append(f"w:{line}")
+
+        def read_line(self, timeout: float | None = None) -> str | None:
+            ops.append("r0")
+            _time.sleep(0.05)
+            ops.append("r1")
+            return "ok"
+
+        def close(self) -> None:
+            pass
+
+    host = MarlinHost(_SlowTransport())
+    worker = threading.Thread(target=lambda: host.send("A"))
+    worker.start()
+    _time.sleep(0.01)  # let A enter the locked region first
+    host.send("B")
+    worker.join()
+
+    # Each send is [w:X, r0, r1]; the lock keeps the two triples contiguous.
+    # Without it, the 0.05s read overlap would interleave them.
+    assert len(ops) == 6
+    assert ops[1:3] == ["r0", "r1"]
+    assert ops[4:6] == ["r0", "r1"]
+    assert ops[0].startswith("w:") and ops[3].startswith("w:")
