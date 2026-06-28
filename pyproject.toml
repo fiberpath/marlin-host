@@ -1,6 +1,6 @@
 [project]
 name = "marlin-host"
-version = "0.2.0"
+version = "0.2.1"
 description = "Host-side Python library for the Marlin firmware serial protocol."
 readme = "README.md"
 requires-python = ">=3.11"

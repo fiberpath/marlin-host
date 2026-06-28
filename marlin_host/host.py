@@ -14,6 +14,7 @@ pause/resume/stop are host-side: pausing simply stops sending the next line.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -133,6 +134,11 @@ class MarlinHost:
         self._max_resends = max_resends
         self._connect_probes = connect_probes
         self._on_action = on_action
+        # Serialises transport access so send()/query()/stream() are mutually
+        # thread-safe — e.g. a worker streaming while another thread issues a
+        # manual command. emergency_stop() deliberately bypasses this (M112 must
+        # preempt, not wait behind an in-flight line).
+        self._io_lock = threading.Lock()
         self._line_number = 0
         self._halted = False
         self._connected = False
@@ -292,8 +298,9 @@ class MarlinHost:
         """
         if self._halted:
             raise HaltError("controller is halted; a reset is required")
-        self._write(command)
-        return self._await_terminal(command)
+        with self._io_lock:
+            self._write(command)
+            return self._await_terminal(command)
 
     def query(self, command: str) -> list[MarlinResponse]:
         """Send a reporting command and return its intermediate response lines.
@@ -304,8 +311,9 @@ class MarlinHost:
         if self._halted:
             raise HaltError("controller is halted; a reset is required")
         collected: list[MarlinResponse] = []
-        self._write(command)
-        self._await_terminal(command, collected)
+        with self._io_lock:
+            self._write(command)
+            self._await_terminal(command, collected)
         return collected
 
     def capabilities(self) -> Profile:
