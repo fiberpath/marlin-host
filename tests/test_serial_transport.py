@@ -76,3 +76,29 @@ def test_reset_pulses_dtr_assert_then_release_without_flushing() -> None:
     sleep.assert_called_once()  # held between assert and release
     t.close()
     assert ("close", None) in events
+
+
+def test_reset_with_flush_discards_stale_input_after_the_edge() -> None:
+    """Recovery reset: flush stale pre-reset output (e.g. a post-M112 halt line)
+    only *after* the DTR release, so it can't poison the next connect."""
+    events: list[tuple[str, object]] = []
+
+    class _RecordingSerial:
+        @property
+        def dtr(self) -> bool | None:
+            return None
+
+        @dtr.setter
+        def dtr(self, value: bool) -> None:
+            events.append(("dtr", value))
+
+        def reset_input_buffer(self) -> None:
+            events.append(("flush", None))
+
+    rec = _RecordingSerial()
+    with patch("serial.serial_for_url", return_value=rec), patch("time.sleep"):
+        t = SerialTransport("loop://", reset_on_open=False)
+        t.reset(flush=True)
+
+    # Flush happens last — after assert(True) and release(False), never before.
+    assert events == [("dtr", True), ("dtr", False), ("flush", None)]
