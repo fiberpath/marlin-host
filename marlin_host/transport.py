@@ -135,7 +135,9 @@ class SerialTransport:
         if reset_on_open:
             self.reset()
 
-    def reset(self, *, dtr: bool = True, rts: bool = False, assert_hold: float = 0.2) -> None:
+    def reset(
+        self, *, dtr: bool = True, rts: bool = False, assert_hold: float = 0.2, flush: bool = False
+    ) -> None:
         """Pulse the reset line so the controller reboots and re-emits ``start``.
 
         Follows the printrun sequence — assert DTR, hold ``assert_hold`` seconds,
@@ -143,9 +145,16 @@ class SerialTransport:
         AVR/RAMPS and chip-fed 32-bit boards that edge couples to ``RESET`` through
         a small capacitor; native-USB boards have no such cap and ignore it (fine —
         ``MarlinHost.connect`` falls back to probing). RTS is left at the driver
-        default unless ``rts=True``; no standard Marlin board needs it. The input
-        buffer is deliberately not flushed so ``connect`` can match the ``start``
-        greeting. ``assert_hold`` is the only board-specific knob here; see issue #4.
+        default unless ``rts=True``; no standard Marlin board needs it.
+
+        By default the input buffer is **not** flushed, so ``connect`` can match the
+        ``start`` greeting on a normal open. Pass ``flush=True`` to discard buffered
+        input right after the reset edge — required when *recovering* a board that
+        already emitted stale output (e.g. ``Error:Printer halted. kill() called!``
+        after an M112), which the next ``connect`` would otherwise consume and
+        misreport as a fresh halt. The post-reboot ``start`` arrives after the boot
+        delay, so it survives the flush. ``assert_hold`` is the board-specific
+        timing knob; see issue #4.
         """
         if dtr:
             self._serial.dtr = True  # assert -> adapter DTR pin low -> RESET edge
@@ -156,6 +165,10 @@ class SerialTransport:
             self._serial.dtr = False  # release
         if rts:
             self._serial.rts = False
+        if flush:
+            # Stale pre-reset output is already buffered; the reboot `start` is not
+            # yet, so dropping the buffer now clears the former and keeps the latter.
+            self._serial.reset_input_buffer()
 
     def write_line(self, line: str) -> None:
         self._serial.write((line + "\n").encode("ascii"))
