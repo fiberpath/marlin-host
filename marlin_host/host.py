@@ -318,6 +318,16 @@ class MarlinHost:
         firmware, caps, _ = self._query_m115()
         return Profile(firmware=firmware, caps=caps)
 
+    def temperatures(self) -> Mapping[str, float]:
+        """Query M105 and return the reported temperature fields, e.g.
+        ``{'T': 20.6, 'B': 0.0, '@': 0.0}`` (hotend ``T``, bed ``B``, power ``@``).
+
+        Unlike M114, Marlin carries the M105 report on the ``ok`` line itself, so —
+        unlike :meth:`query` — the data is the terminal response's fields, not a
+        preceding report line. Returns an empty mapping if the board reports none.
+        """
+        return self.send("M105").fields or {}
+
     def stream(
         self, program: Iterable[str], *, poll_interval: float = DEFAULT_PAUSE_POLL
     ) -> Iterator[StreamProgress]:

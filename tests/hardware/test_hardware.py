@@ -46,7 +46,7 @@ def test_connect_and_negotiate(rig: SimpleNamespace) -> None:
 
 def test_queries(rig: SimpleNamespace) -> None:
     assert rig.host.query("M114")  # at least the position report line
-    assert rig.host.send("M105").is_ack  # temperature rides on the `ok` line
+    assert "T" in rig.host.temperatures()  # hotend temp, read off the `ok` line
 
 
 def test_reliable_stream(rig: SimpleNamespace) -> None:

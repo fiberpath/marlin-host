@@ -392,3 +392,17 @@ def test_reliable_send_recovers_from_back_to_back_resends() -> None:
     assert host.send("G1 X20").is_ack
     assert sim.expected == 3
     assert t.read_line() is None
+
+
+def test_temperatures_reads_fields_from_the_ok_line() -> None:
+    # Marlin answers M105 on the `ok` line itself (real RAMPS: `ok T:20.63 /0.00 @:0`),
+    # so the temps are terminal-response fields, not a preceding report line.
+    host = MarlinHost(FakeTransport(responder=lambda _line: ["ok T:20.63 /0.00 @:0"]))
+    temps = host.temperatures()
+    assert temps["T"] == pytest.approx(20.63)
+    assert temps["@"] == pytest.approx(0.0)
+
+
+def test_temperatures_empty_when_board_reports_none() -> None:
+    host = MarlinHost(FakeTransport(responder=lambda _line: ["ok"]))
+    assert host.temperatures() == {}
