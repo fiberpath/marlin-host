@@ -406,3 +406,31 @@ def test_temperatures_reads_fields_from_the_ok_line() -> None:
 def test_temperatures_empty_when_board_reports_none() -> None:
     host = MarlinHost(FakeTransport(responder=lambda _line: ["ok"]))
     assert host.temperatures() == {}
+
+
+def test_on_action_delivers_board_initiated_host_actions() -> None:
+    # //action:pause (e.g. M600/runout/LCD) arrives mid-command; without a
+    # callback it is silently dropped, so the consumer must be able to observe it.
+    seen: list[str] = []
+    host = MarlinHost(
+        FakeTransport(responder=lambda _line: ["//action:pause", "ok"]),
+        on_action=lambda r: seen.append(r.action or r.raw),
+    )
+    assert host.send("G1 X10").is_ack
+    assert seen == ["pause"]
+
+
+def test_actions_without_a_callback_are_dropped_not_fatal() -> None:
+    host = MarlinHost(FakeTransport(responder=lambda _line: ["//action:cancel", "ok"]))
+    assert host.send("G1 X10").is_ack  # no callback registered -> no error
+
+
+def test_on_action_fires_during_streaming() -> None:
+    seen: list[str] = []
+    replies = iter([["ok"], ["//action:paused", "ok"], ["ok"]])
+    host = MarlinHost(
+        FakeTransport(responder=lambda _line: next(replies)),
+        on_action=lambda r: seen.append(r.action or r.raw),
+    )
+    list(host.stream(["G1 X1", "G1 X2", "G1 X3"]))
+    assert seen == ["paused"]
