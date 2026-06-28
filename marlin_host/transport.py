@@ -109,8 +109,9 @@ class SerialTransport:
     ``reset_on_open=False`` to skip the pulse (native-USB boards that ignore DTR,
     or to attach to a running controller).
 
-    NOTE: the DTR-pulse timing is board-specific and unvalidated against hardware;
-    expect to tune :meth:`reset` during the first real session — see issue #4.
+    NOTE: the DTR-pulse timing is board-specific. The default ``assert_hold=0.2``
+    is validated on RAMPS 1.4 / Marlin ``bugfix-2.1.x`` (reliably catches ``start``);
+    other adapters may need tuning — see issue #4.
     """
 
     def __init__(

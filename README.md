@@ -5,8 +5,11 @@ PC/host end of the line-numbered, checksummed, `ok`-acknowledged G-code
 conversation that hosts like OctoPrint and Pronterface speak to a printer or
 CNC running Marlin. Neutral and standalone; not tied to any one application.
 
-> **Status:** early scaffolding. Developed against the Marlin firmware source
-> and official docs. Licensed Apache-2.0.
+> **Status:** MVP. Connect, M115 negotiation, reliable framed send, streaming,
+> queries, and out-of-band e-stop are implemented and **validated against real
+> hardware** (RAMPS 1.4 / Marlin `bugfix-2.1.x`, logic level — motion/thermal
+> validation under power is ongoing). Developed against the Marlin firmware
+> source and official docs. Licensed Apache-2.0.
 
 ## Repository conventions
 
