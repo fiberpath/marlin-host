@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from marlin_host import FakeTransport, MarlinHost, Profile
+from marlin_host import FakeTransport, MarlinHost, MarlinResponseKind, Profile
 from marlin_host import _constants as c
 from marlin_host.framing import checksum
 from marlin_host.host import HaltError, HostError, ProtocolError
@@ -284,6 +284,35 @@ def test_send_consumes_busy_keepalive_then_ok() -> None:
     )
     host = MarlinHost(t)
     assert host.send("G1 X10").is_ack
+
+
+# Marlin's auto-report temperature body (temperature.cpp print_heater_states): with
+# AUTO_REPORT_TEMPERATURES the controller pushes this unsolicited, on a timer. Field-
+# labelled like an M105 report and (having no `ok` prefix) classified as TEMPERATURE.
+_AUTOREPORT_TEMP_LINE = "T:24.00 /0.00 B:23.00 /0.00 @:0 B@:0"
+
+
+def test_unsolicited_autoreport_temperature_is_absorbed_not_terminal() -> None:
+    # AUTO_REPORT_TEMPERATURES makes the controller push unsolicited `T:` telemetry
+    # on a timer (temperature.cpp), interleaved with command traffic. It is a non-
+    # terminal report, NOT the ack — the host must absorb it so ok-per-command pacing
+    # stays in sync. The dialect matrix covers AUTOREPORT_TEMP only as a negotiated
+    # cap flag; this covers it as WIRE behavior (#19).
+    #
+    # Driven through the collecting `query` path so the absorbed line is observable:
+    # a bare `send`/`stream` discards intermediates (collect=None), so a stream alone
+    # cannot tell whether the interleave happened at all — the assertion below fails
+    # if the `T:` is dropped or misclassified.
+    t = FakeTransport(responder=lambda _line: [_AUTOREPORT_TEMP_LINE, "ok"])
+    collected = MarlinHost(t).query("M114")
+    assert [r.kind for r in collected] == [MarlinResponseKind.TEMPERATURE]
+
+    # And end-to-end: with a `T:` pushed ahead of every ack, a short stream still
+    # completes one ack per command — the telemetry never desyncs the pacing.
+    host = MarlinHost(FakeTransport(responder=lambda _line: [_AUTOREPORT_TEMP_LINE, "ok"]))
+    results = list(host.stream(["G28", "G1 X10", "G1 X20"]))
+    assert [r.commands_sent for r in results] == [1, 2, 3]
+    assert all(r.response.is_ack for r in results)
 
 
 def test_send_raises_on_paused_for_user_busy() -> None:
