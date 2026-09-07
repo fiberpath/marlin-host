@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# Every job here only reads the repository: checkout, install, lint, test and a
+# drift check. Set the floor explicitly so the workflow does not inherit a
+# broader default token.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
