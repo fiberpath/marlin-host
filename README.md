@@ -44,11 +44,11 @@ Parse a single response line:
 from marlin_host import parse_response
 
 resp = parse_response("ok N12 P15 B3")
-resp.is_ack          # True
-resp.fields          # {'N': 12.0, 'P': 15.0, 'B': 3.0}
+resp.is_ack  # True
+resp.fields  # {'N': 12.0, 'P': 15.0, 'B': 3.0}
 
-parse_response("Resend: 13").resend_line     # 13
-parse_response("echo:busy: processing").is_keepalive   # True
+parse_response("Resend: 13").resend_line  # 13
+parse_response("echo:busy: processing").is_keepalive  # True
 ```
 
 Drive a real controller (`pip install 'marlin-host[serial]'`):
@@ -57,14 +57,14 @@ Drive a real controller (`pip install 'marlin-host[serial]'`):
 from marlin_host import MarlinHost, SerialTransport
 
 host = MarlinHost(SerialTransport("/dev/ttyUSB0", 250000), reliable=True)
-host.connect()                       # resets the board, drains the startup banner
+host.connect()  # resets the board, drains the startup banner
 print(host.capabilities().firmware)
 
-host.send("G28")                     # homes; returns when the controller acks `ok`
+host.send("G28")  # homes; returns when the controller acks `ok`
 for progress in host.stream(open("part.gcode")):
     print(f"{progress.commands_sent}/{progress.total_commands}")
 
-host.emergency_stop()                # M112, out-of-band
+host.emergency_stop()  # M112, out-of-band
 ```
 
 Develop and test against `FakeTransport` — no hardware required.
