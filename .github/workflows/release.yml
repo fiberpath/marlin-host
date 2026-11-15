@@ -28,7 +28,7 @@ jobs:
     outputs:
       tag: ${{ steps.check.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # need all tags for the "tag is free" check
 
@@ -77,11 +77,11 @@ jobs:
       name: pypi
       url: https://pypi.org/project/marlin-host/
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.3
 
       - name: Build distribution
         run: uv build
@@ -107,7 +107,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.validate.outputs.tag }}
           name: marlin-host ${{ inputs.version }}
